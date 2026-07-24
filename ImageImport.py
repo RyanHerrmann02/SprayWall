@@ -1,25 +1,8 @@
 import cv2
 import numpy as np
+import utils
 
 path = ""
-
-""" Definition "SHOW" to take inputted image and show it as a resized image to fit into the
-    screen without changing the resolution may be used in another script
-    name    --> Inputted name arbitrarily given by user
-    img     --> Given image to scale (will change one needing grayscale)
-    max_dim --> Maximum size that we want the window this is set to 1000
-    scale   --> Will resize to be half, but if the scale is less than one the resolution
-                will not be changed as we don't want to make the image too small if it already
-                fits the screen"""
-def show(name, img, max_dim=1000):
-    h, w = img.shape[:2]
-    scale = max_dim / max(h, w)
-    if scale < 1:  # only shrink, don't upscale small images
-        display_img = cv2.resize(img, (int(w * scale), int(h * scale)))
-    else:
-        display_img = img
-    cv2.imshow(name, display_img)
-
 
 """ Definition "ENHANCECONTRAST" applies CLAHE (adaptive local contrast boosting) to a
     grayscale image before edge detection. This helps recover edges in areas where chalk
@@ -82,6 +65,35 @@ def maskAboveLine(img, y_line):
     result[:y_line, ...] = 0
     return result
 
+""" Definition "WALLCOLORMASK" estimates the wall's color as the most common (mode) color
+    across the whole image, since the wall should occupy more pixels than any individual
+    hold color, regardless of framing. Then creates a mask of every pixel that differs
+    meaningfully from that color. Uses LAB color space since it separates brightness from
+    color direction, which catches pastel/light-colored holds that are close in brightness
+    to a gray wall but still clearly different in color.
+    img             --> input color image (BGR)
+    distance_thresh --> how far (in LAB distance) a pixel must be from wall color to count
+                        as "hold," not "wall" """
+def wallColorMask(img, distance_thresh=8):
+    lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB).astype(np.float32)
+
+    small = cv2.resize(lab, (100, 100), interpolation=cv2.INTER_AREA)
+    pixels = small.reshape(-1, 3)
+
+    rounded = np.round(pixels / 4) * 4
+    values, counts = np.unique(rounded, axis=0, return_counts=True)
+    wall_color = values[np.argmax(counts)]
+
+    diff = np.linalg.norm(lab[:, :, 1:3] - wall_color[1:3], axis=2)
+
+    # # Find what color is mostly seen
+    # print("Wall color (LAB):", wall_color)
+    # print("Diff min/max/mean:", diff.min(), diff.max(), diff.mean())
+    # print("Percent of pixels above threshold:", (diff > distance_thresh).mean() * 100, "%")
+
+    mask = (diff > distance_thresh).astype(np.uint8) * 255
+
+    return mask
 
 """ Definition "GRAYANDEDGEDETECT" to take the image that was inputted and then to convert
     it into a grayscale image and do an edge detection on it to create the outline of the holds
@@ -102,9 +114,15 @@ def grayAndEdgeDetect(img):
     edges = cv2.Canny(blur, threshold1=100, threshold2=150)
 
     # Remove small contours (bolts/hardware), keep only larger hold-sized shapes
-    kernel = np.ones((20, 20), np.uint8)
+    kernel = np.ones((10, 10), np.uint8)
     closed = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel)
     holdEdges = filterSmallContours(closed, min_area=270)
+
+    #catch pastel/low-contrast holds via color distance from wall
+    colorMask = wallColorMask(img)
+    colorMask = filterSmallContours(colorMask, min_area=270)  # apply same bolt-size filter
+
+    combined = cv2.bitwise_or(holdEdges, colorMask)
 
     # Find the top-of-wall line and mask out everything above it
     wall_top_y = findWallTop(edges)
@@ -113,7 +131,7 @@ def grayAndEdgeDetect(img):
     else:
         print("No strong horizontal line found for wall top — skipping crop.")
 
-    return [gray, edges, holdEdges]
+    return [gray, edges, combined]
 
 
 if __name__ == "__main__":
@@ -128,9 +146,9 @@ if __name__ == "__main__":
     cv2.imwrite("edges_layer.png", filtered[1])
     cv2.imwrite("hold_edges_layer.png", filtered[2])
 
-    show("Wall", image)
-    show("Gray", filtered[0])
-    show("Edge", filtered[1])
-    show("Hold Edges", filtered[2])
+    utils.show("Wall", image)
+    utils.show("Gray", filtered[0])
+    utils.show("Edge", filtered[1])
+    utils.show("Total Filtering", filtered[2])
     cv2.waitKey(0)
     cv2.destroyAllWindows()

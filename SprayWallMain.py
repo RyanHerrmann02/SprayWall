@@ -1,10 +1,21 @@
-import ImageImport
+import cv2
+import ImageImport as II
+import utils
 
-image = "MacroSpray.jpg"
+# Image input path
+# path = "MacroSpray.jpg"
+path = "SimpleRoutes.jpg"
+image = cv2.imread(path)
 
-def main():
+# File not found exception
+if image is None:
+    raise FileNotFoundError(f"Couldn't load image at {path}")
 
-    return()
+# All import, filtering, and masking. Includes image in grayscale
+grayscale, edges, fullMask = II.grayAndEdgeDetect(image)
 
-if __name__ == "__main__":
-    main()
+utils.show("Wall", image)
+utils.show("Edges", edges)
+utils.show("Hold Mask", fullMask)
+cv2.waitKey(0)
+cv2.destroyAllWindows()
